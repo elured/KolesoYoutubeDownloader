@@ -1,13 +1,16 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace KolesoYoutubeDownloader.ViewModels
 {
     public class TimeInputViewModel : BaseViewModel
     {
+        private string _hours;
+        public string Hours
+        {
+            get => _hours;
+            set => SetProperty(ref _hours, FilterNumbers(value));
+        }
+
         private string _minutes;
         public string Minutes
         {
@@ -29,7 +32,6 @@ namespace KolesoYoutubeDownloader.ViewModels
             set => SetProperty(ref _milliseconds, FilterNumbers(value));
         }
 
-        // Простая защита от ввода букв
         private string FilterNumbers(string pInput)
         {
             if (string.IsNullOrEmpty(pInput)) return pInput;
@@ -38,21 +40,24 @@ namespace KolesoYoutubeDownloader.ViewModels
 
         public TimeSpan? GetTimeSpan()
         {
+            bool lHasHour = int.TryParse(Hours, out int lHour);
             bool lHasMin = int.TryParse(Minutes, out int lMin);
             bool lHasSec = int.TryParse(Seconds, out int lSec);
             bool lHasMs = int.TryParse(Milliseconds, out int lMs);
 
             // Если все поля пустые, возвращаем null (без обрезки)
-            if (!lHasMin && !lHasSec && !lHasMs)
+            if (!lHasHour && !lHasMin && !lHasSec && !lHasMs)
             {
                 return null;
             }
 
-            return new TimeSpan(0, 0, lMin, lSec, lMs);
+            // Передаем: дни (0), часы, минуты, секунды и миллисекунды
+            return new TimeSpan(0, lHour, lMin, lSec, lMs);
         }
 
         public void Clear()
         {
+            Hours = string.Empty;
             Minutes = string.Empty;
             Seconds = string.Empty;
             Milliseconds = string.Empty;

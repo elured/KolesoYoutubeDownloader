@@ -1,47 +1,54 @@
-﻿using KolesoYoutubeDownloader.Models;
+﻿using CliWrap;
+using CliWrap.Buffered;
+using KolesoYoutubeDownloader.Models;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using YoutubeExplode;
-using YoutubeExplode.Videos.Streams;
-using CliWrap.Buffered;
-using CliWrap;
 using Xabe.FFmpeg.Downloader;
 
 namespace KolesoYoutubeDownloader.Services
 {
     public class YouTubeDownloaderService : IYouTubeDownloaderService
     {
-        private readonly YoutubeClient _youtubeClient;
-
         public YouTubeDownloaderService()
         {
-            var lHandler = new HttpClientHandler { UseDefaultCredentials = true };
-            var lHttpClient = new HttpClient(lHandler);
-
-            _youtubeClient = new YoutubeClient(lHttpClient);
+            // YoutubeClient больше не нужен, конструктор оставляем для DI
         }
 
         public async Task DownloadVideoAsync(DownloadOptions pOptions, IProgress<ProgressData> pProgress = null)
         {
+            await EnsureYtDlpExistsAsync(pProgress);
+            await EnsureFFmpegExistsAsync(pProgress);
+            string lYtDlpPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "yt-dlp.exe");
+
             pProgress?.Report(new ProgressData { StatusText = "Получение информации о видео...", Percent = 0 });
 
-            var lVideo = await _youtubeClient.Videos.GetAsync(pOptions.VideoUrl);
-            var lStreamManifest = await _youtubeClient.Videos.Streams.GetManifestAsync(lVideo.Id);
+            // Запрашиваем JSON с информацией о видео через yt-dlp
+            var lInfoResult = await Cli.Wrap(lYtDlpPath)
+                .WithArguments(pArgs => pArgs.Add("--dump-json").Add(pOptions.VideoUrl))
+                .ExecuteBufferedAsync();
 
-            string lSafeTitle = string.Join("_", lVideo.Title.Split(Path.GetInvalidFileNameChars()));
+            using var lDoc = JsonDocument.Parse(lInfoResult.StandardOutput);
+            var lRoot = lDoc.RootElement;
+
+            string lTitle = lRoot.TryGetProperty("title", out var lTitleProp) && lTitleProp.ValueKind != JsonValueKind.Null ? lTitleProp.GetString() : "YouTube_Video";
+            double lDurationSeconds = lRoot.TryGetProperty("duration", out var lDurProp) && lDurProp.ValueKind != JsonValueKind.Null ? lDurProp.GetDouble() : 0;
+            double lAudioBitrate = lRoot.TryGetProperty("abr", out var lAbrProp) && lAbrProp.ValueKind != JsonValueKind.Null ? lAbrProp.GetDouble() : 128.0;
+
+            string lSafeTitle = string.Join("_", lTitle.Split(Path.GetInvalidFileNameChars()));
             string lDownloadDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
 
             bool lNeedsTrimming = pOptions.StartTime.HasValue || pOptions.EndTime.HasValue;
 
             TimeSpan lEffectiveStart = pOptions.StartTime ?? TimeSpan.Zero;
-            TimeSpan lEffectiveEnd = pOptions.EndTime ?? lVideo.Duration ?? TimeSpan.Zero;
+            TimeSpan lEffectiveEnd = pOptions.EndTime ?? (lDurationSeconds > 0 ? TimeSpan.FromSeconds(lDurationSeconds) : TimeSpan.Zero);
             double lClipDurationSeconds = (lEffectiveEnd - lEffectiveStart).TotalSeconds;
 
             bool lApplyFadeOut = lNeedsTrimming && lClipDurationSeconds > 0.5;
@@ -51,28 +58,21 @@ namespace KolesoYoutubeDownloader.Services
             {
                 pProgress?.Report(new ProgressData
                 {
-                    StatusText = "Скачивание потока с YouTube...",
+                    StatusText = "Скачивание потока...",
                     Percent = pPercent * 100
                 });
             });
 
             if (pOptions.IsAudioOnly)
             {
-                var lAudioStreamInfo = lStreamManifest.GetAudioOnlyStreams().GetWithHighestBitrate();
-                if (lAudioStreamInfo == null)
-                {
-                    throw new InvalidOperationException("Подходящий аудиопоток не найден.");
-                }
-
-                bool lExceedsAacThreshold = lAudioStreamInfo.Bitrate.KiloBitsPerSecond > 320;
+                bool lExceedsAacThreshold = lAudioBitrate > 320;
                 string lTargetExtension = lExceedsAacThreshold ? "flac" : "mp3";
 
                 string lFullPath = GetUniqueFilePath(lDownloadDirectory, lSafeTitle, lTargetExtension);
-                string lTempPath = Path.GetTempFileName() + $".{lAudioStreamInfo.Container.Name}";
+                string lTempPath = Path.GetTempFileName() + ".tmp"; // FFmpeg сам поймет формат
 
-                await _youtubeClient.Videos.Streams.DownloadAsync(lAudioStreamInfo, lTempPath, lDownloadProgress);
-
-                await EnsureFFmpegExistsAsync(pProgress);
+                // Качаем только лучшее аудио (bestaudio)
+                await DownloadWithYtDlpAsync(lYtDlpPath, pOptions.VideoUrl, "ba", lTempPath, lDownloadProgress);
 
                 pProgress?.Report(new ProgressData { StatusText = "Подготовка к обработке аудио...", Percent = 0 });
 
@@ -132,37 +132,33 @@ namespace KolesoYoutubeDownloader.Services
             }
             else
             {
-                var lVideoStreamInfo = lStreamManifest.GetMuxedStreams().GetWithHighestVideoQuality();
-                if (lVideoStreamInfo == null)
+                string lFullPath = GetUniqueFilePath(lDownloadDirectory, lSafeTitle, "mp4");
+
+                string lTempVideoPath = Path.GetTempFileName() + ".tmp";
+                string lTempAudioPath = Path.GetTempFileName() + ".tmp";
+
+                try
                 {
-                    throw new InvalidOperationException("Подходящий видеопоток не найден.");
-                }
+                    // Качаем лучшее видео (bestvideo)
+                    pProgress?.Report(new ProgressData { StatusText = "Скачивание видеопотока...", Percent = 0 });
+                    await DownloadWithYtDlpAsync(lYtDlpPath, pOptions.VideoUrl, "bv", lTempVideoPath, lDownloadProgress);
 
-                string lFullPath = GetUniqueFilePath(lDownloadDirectory, lSafeTitle, lVideoStreamInfo.Container.Name);
+                    // Качаем лучшее аудио (bestaudio)
+                    pProgress?.Report(new ProgressData { StatusText = "Скачивание аудиопотока...", Percent = 50 });
+                    await DownloadWithYtDlpAsync(lYtDlpPath, pOptions.VideoUrl, "ba", lTempAudioPath, lDownloadProgress);
 
-                if (lNeedsTrimming)
-                {
-                    string lTempPath = Path.GetTempFileName() + $".{lVideoStreamInfo.Container.Name}";
-
-                    await _youtubeClient.Videos.Streams.DownloadAsync(lVideoStreamInfo, lTempPath, lDownloadProgress);
-
-                    await EnsureFFmpegExistsAsync(pProgress);
-
-                    pProgress?.Report(new ProgressData { StatusText = "Подготовка к обработке видео...", Percent = 0 });
+                    pProgress?.Report(new ProgressData { StatusText = "Мерж и обработка видео в FFmpeg...", Percent = 80 });
 
                     await Cli.Wrap("ffmpeg")
                         .WithArguments(pArgs =>
                         {
-                            pArgs.Add("-i").Add(lTempPath);
+                            pArgs.Add("-i").Add(lTempVideoPath);
+                            pArgs.Add("-i").Add(lTempAudioPath);
 
-                            if (pOptions.StartTime.HasValue)
+                            if (lNeedsTrimming)
                             {
-                                pArgs.Add("-ss").Add(pOptions.StartTime.Value.ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture));
-                            }
-
-                            if (pOptions.EndTime.HasValue)
-                            {
-                                pArgs.Add("-to").Add(pOptions.EndTime.Value.ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture));
+                                pArgs.Add("-ss").Add(lEffectiveStart.ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture));
+                                pArgs.Add("-to").Add(lEffectiveEnd.ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture));
                             }
 
                             pArgs.Add("-c:v").Add("libx264").Add("-c:a").Add("aac");
@@ -191,6 +187,7 @@ namespace KolesoYoutubeDownloader.Services
                                 pArgs.Add("-af").Add(string.Join(",", lAudioFilters));
                             }
 
+                            pArgs.Add("-map").Add("0:v:0").Add("-map").Add("1:a:0");
                             pArgs.Add(lFullPath);
                         })
                         .WithStandardErrorPipe(PipeTarget.ToDelegate(pLine =>
@@ -198,16 +195,61 @@ namespace KolesoYoutubeDownloader.Services
                             ReportFFmpegProgress(pLine, lClipDurationSeconds, pProgress, "Обработка видео в FFmpeg...");
                         }))
                         .ExecuteAsync();
-
-                    File.Delete(lTempPath);
                 }
-                else
+                finally
                 {
-                    await _youtubeClient.Videos.Streams.DownloadAsync(lVideoStreamInfo, lFullPath, lDownloadProgress);
+                    if (File.Exists(lTempVideoPath)) File.Delete(lTempVideoPath);
+                    if (File.Exists(lTempAudioPath)) File.Delete(lTempAudioPath);
                 }
             }
 
             pProgress?.Report(new ProgressData { StatusText = "Готово!", Percent = 100 });
+        }
+
+        private static async Task DownloadWithYtDlpAsync(string pYtDlpPath, string pUrl, string pFormat, string pOutputPath, IProgress<double> pProgress)
+        {
+            var lRegex = new Regex(@"\[download\]\s+(?<percent>\d+\.?\d*)%", RegexOptions.Compiled);
+            var lErrorBuilder = new StringBuilder();
+            string lFFmpegDir = AppDomain.CurrentDomain.BaseDirectory;
+
+            var lResult = await Cli.Wrap(pYtDlpPath)
+                .WithArguments(pArgs => pArgs
+                    .Add("-f").Add(pFormat)
+                    .Add("-o").Add(pOutputPath)
+                    .Add("--ffmpeg-location").Add(lFFmpegDir) // Указываем, где лежит FFmpeg
+                    .Add("--fixup").Add("never")              // Запрещаем менять файл после скачивания!
+                    .Add(pUrl))
+                .WithStandardOutputPipe(PipeTarget.ToDelegate(pLine =>
+                {
+                    var lMatch = lRegex.Match(pLine);
+                    if (lMatch.Success && double.TryParse(lMatch.Groups["percent"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out double lPercent))
+                    {
+                        pProgress?.Report(lPercent / 100.0);
+                    }
+                }))
+                .WithStandardErrorPipe(PipeTarget.ToDelegate(pLine =>
+                {
+                    lErrorBuilder.AppendLine(pLine); // Собираем текст ошибки, если она будет
+                }))
+                .WithValidation(CommandResultValidation.None) // Отключаем автоматический эксепшен
+                .ExecuteAsync();
+
+            if (lResult.ExitCode != 0)
+            {
+                throw new Exception($"yt-dlp завершился с ошибкой (Exit Code {lResult.ExitCode}):\n{lErrorBuilder}");
+            }
+        }
+
+        private static async Task EnsureYtDlpExistsAsync(IProgress<ProgressData> pProgress)
+        {
+            string lYtDlpPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "yt-dlp.exe");
+            if (!File.Exists(lYtDlpPath))
+            {
+                pProgress?.Report(new ProgressData { StatusText = "Скачивание yt-dlp...", Percent = 0 });
+                using var lClient = new HttpClient();
+                var lBytes = await lClient.GetByteArrayAsync("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe");
+                await File.WriteAllBytesAsync(lYtDlpPath, lBytes);
+            }
         }
 
         private static string GetUniqueFilePath(string pDirectory, string pFileName, string pExtension)
@@ -270,6 +312,45 @@ namespace KolesoYoutubeDownloader.Services
                     }
                 }
             }
+        }
+
+        public async Task<List<string>> GetAvailableVideoQualitiesAsync(string pUrl, CancellationToken pToken = default)
+        {
+            await EnsureYtDlpExistsAsync(null);
+            string lYtDlpPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "yt-dlp.exe");
+
+            BufferedCommandResult lResult = await Cli.Wrap(lYtDlpPath)
+                .WithArguments(pArgs => pArgs.Add("--dump-json").Add(pUrl))
+                .WithValidation(CommandResultValidation.None) // Не бросать Exception, если yt-dlp упал из-за кривой ссылки
+                .ExecuteBufferedAsync(pToken);                // Передаем токен для мгновенной отмены
+
+            // Если процесс завершился с ошибкой (например, битая ссылка), просто возвращаем пустой список
+            if (lResult.ExitCode != 0 || string.IsNullOrWhiteSpace(lResult.StandardOutput))
+            {
+                return new List<string>();
+            }
+
+            using JsonDocument lDoc = JsonDocument.Parse(lResult.StandardOutput);
+            JsonElement lFormats = lDoc.RootElement.GetProperty("formats");
+
+            HashSet<int> lQualities = new HashSet<int>();
+
+            foreach (JsonElement lFormat in lFormats.EnumerateArray())
+            {
+                if (lFormat.TryGetProperty("vcodec", out JsonElement lVcodec) && lVcodec.GetString() != "none")
+                {
+                    if (lFormat.TryGetProperty("height", out JsonElement lHeightProp) && lHeightProp.ValueKind == JsonValueKind.Number)
+                    {
+                        int lHeight = lHeightProp.GetInt32();
+                        if (lHeight > 0)
+                        {
+                            lQualities.Add(lHeight);
+                        }
+                    }
+                }
+            }
+
+            return lQualities.OrderByDescending(pHeight => pHeight).Select(pHeight => $"{pHeight}p").ToList();
         }
     }
 }

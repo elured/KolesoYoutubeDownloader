@@ -10,6 +10,7 @@
              d:DesignHeight="450" d:DesignWidth="800">
     <UserControl.Resources>
         <conv:InverseBooleanConverter x:Key="InverseBooleanConverter"/>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
     </UserControl.Resources>
 
     <Grid Margin="20">
@@ -44,6 +45,20 @@
                      FontSize="14"/>
         </StackPanel>
 
+        <StackPanel Orientation="Horizontal" 
+                    Margin="0,45,0,10"
+                    Visibility="{Binding IsAnalyzing, Converter={StaticResource BooleanToVisibilityConverter}}">
+
+            <ProgressBar IsIndeterminate="True" 
+                         Width="100" 
+                         Height="12" 
+                         Margin="0,0,10,0"/>
+
+            <TextBlock Text="Анализируем доступные форматы видео..." 
+                       Foreground="#007ACC" 
+                       FontStyle="Italic" 
+                       VerticalAlignment="Center"/>
+        </StackPanel>
         <!-- Формат и Обрезка -->
         <Grid Grid.Row="2" Margin="0,0,0,20">
             <Grid.ColumnDefinitions>
@@ -58,27 +73,31 @@
                            Margin="0,0,0,5" 
                            Foreground="#555555"/>
                 <RadioButton Content="Только аудио (FLAC/MP3)" 
-                             IsChecked="{Binding IsAudioOnly}" 
+                             IsChecked="{Binding IsAudioOnly, UpdateSourceTrigger=PropertyChanged}" 
                              GroupName="FormatGroup" 
                              Margin="0,2,0,2" 
                              IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}"/>
-                <RadioButton Content="Видео + Аудио (MP4)" 
+
+                <RadioButton Content="Видео (MP4)" 
+                             IsChecked="{Binding IsAudioOnly, Converter={StaticResource InverseBooleanConverter}, UpdateSourceTrigger=PropertyChanged}" 
                              GroupName="FormatGroup" 
                              Margin="0,2,0,2" 
                              IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}"/>
             </StackPanel>
-
             <!-- Обрезка -->
-            <StackPanel Grid.Column="1" Margin="10,0,0,0">
+            <StackPanel Grid.Column="1" 
+                        Margin="10,0,0,0">
                 <TextBlock Text="Обрезка (опционально):" 
-                       FontWeight="SemiBold" 
-                       Margin="0,0,0,5" 
-                       Foreground="#555555"/>
+                           FontWeight="SemiBold" 
+                           Margin="0,0,0,5" 
+                           Foreground="#555555"/>
 
                 <!-- Блок Начало -->
                 <Grid Margin="0,0,0,5">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="55"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
@@ -90,8 +109,9 @@
                            Text="Начало:" 
                            VerticalAlignment="Center"/>
 
+                    <!-- Часы -->
                     <TextBox Grid.Column="1" 
-                         Text="{Binding StartTime.Minutes, UpdateSourceTrigger=PropertyChanged}" 
+                         Text="{Binding StartTime.Hours, UpdateSourceTrigger=PropertyChanged}" 
                          IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}" 
                          Width="30" 
                          MaxLength="2" 
@@ -101,10 +121,11 @@
                     <TextBlock Grid.Column="2" 
                            Text=":" 
                            VerticalAlignment="Center" 
-                           Margin="5,0"/>
+                           Margin="3,0"/>
 
+                    <!-- Минуты -->
                     <TextBox Grid.Column="3" 
-                         Text="{Binding StartTime.Seconds, UpdateSourceTrigger=PropertyChanged}" 
+                         Text="{Binding StartTime.Minutes, UpdateSourceTrigger=PropertyChanged}" 
                          IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}" 
                          Width="30" 
                          MaxLength="2" 
@@ -112,11 +133,26 @@
                          Padding="2"/>
 
                     <TextBlock Grid.Column="4" 
+                           Text=":" 
+                           VerticalAlignment="Center" 
+                           Margin="3,0"/>
+
+                    <!-- Секунды -->
+                    <TextBox Grid.Column="5" 
+                         Text="{Binding StartTime.Seconds, UpdateSourceTrigger=PropertyChanged}" 
+                         IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}" 
+                         Width="30" 
+                         MaxLength="2" 
+                         TextAlignment="Center" 
+                         Padding="2"/>
+
+                    <TextBlock Grid.Column="6" 
                            Text="." 
                            VerticalAlignment="Center" 
-                           Margin="5,0"/>
+                           Margin="3,0"/>
 
-                    <TextBox Grid.Column="5" 
+                    <!-- Миллисекунды -->
+                    <TextBox Grid.Column="7" 
                          Text="{Binding StartTime.Milliseconds, UpdateSourceTrigger=PropertyChanged}" 
                          IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}" 
                          Width="40" 
@@ -126,9 +162,11 @@
                 </Grid>
 
                 <!-- Блок Конец -->
-                <Grid>
+                <Grid Margin="0,0,0,5">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="55"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
@@ -140,8 +178,9 @@
                            Text="Конец:" 
                            VerticalAlignment="Center"/>
 
+                    <!-- Часы -->
                     <TextBox Grid.Column="1" 
-                         Text="{Binding EndTime.Minutes, UpdateSourceTrigger=PropertyChanged}" 
+                         Text="{Binding EndTime.Hours, UpdateSourceTrigger=PropertyChanged}" 
                          IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}" 
                          Width="30" 
                          MaxLength="2" 
@@ -151,10 +190,11 @@
                     <TextBlock Grid.Column="2" 
                            Text=":" 
                            VerticalAlignment="Center" 
-                           Margin="5,0"/>
+                           Margin="3,0"/>
 
+                    <!-- Минуты -->
                     <TextBox Grid.Column="3" 
-                         Text="{Binding EndTime.Seconds, UpdateSourceTrigger=PropertyChanged}" 
+                         Text="{Binding EndTime.Minutes, UpdateSourceTrigger=PropertyChanged}" 
                          IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}" 
                          Width="30" 
                          MaxLength="2" 
@@ -162,11 +202,26 @@
                          Padding="2"/>
 
                     <TextBlock Grid.Column="4" 
+                           Text=":" 
+                           VerticalAlignment="Center" 
+                           Margin="3,0"/>
+
+                    <!-- Секунды -->
+                    <TextBox Grid.Column="5" 
+                         Text="{Binding EndTime.Seconds, UpdateSourceTrigger=PropertyChanged}" 
+                         IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}" 
+                         Width="30" 
+                         MaxLength="2" 
+                         TextAlignment="Center" 
+                         Padding="2"/>
+
+                    <TextBlock Grid.Column="6" 
                            Text="." 
                            VerticalAlignment="Center" 
-                           Margin="5,0"/>
+                           Margin="3,0"/>
 
-                    <TextBox Grid.Column="5" 
+                    <!-- Миллисекунды -->
+                    <TextBox Grid.Column="7" 
                          Text="{Binding EndTime.Milliseconds, UpdateSourceTrigger=PropertyChanged}" 
                          IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}" 
                          Width="40" 

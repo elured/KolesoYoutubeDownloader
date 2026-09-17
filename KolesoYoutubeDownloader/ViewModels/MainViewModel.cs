@@ -14,21 +14,46 @@ namespace KolesoYoutubeDownloader.ViewModels
     {
         private readonly IYouTubeDownloaderService _downloaderService;
         private readonly IDialogService _dialogService;
+        private CancellationTokenSource _analysisCts;
 
         #region Свойства для привязки к интерфейсу (Bindings)
+
+        // Событие для чистого взаимодействия с View
+        //public event Action<string> OnAnalysisCompleted;
+
+        private bool _isAnalyzing;
+        public bool IsAnalyzing
+        {
+            get => _isAnalyzing;
+            set => SetProperty(ref _isAnalyzing, value);
+        }
 
         private string _videoUrl;
         public string VideoUrl
         {
             get => _videoUrl;
-            set => SetProperty(ref _videoUrl, value);
+            set
+            {
+                // Если значение не изменилось - ничего не делаем
+                if (_videoUrl == value) return;
+
+                SetProperty(ref _videoUrl, value);
+                _ = CheckAndAnalyzeVideoAsync();
+            }
         }
 
-        private bool _isAudioOnly = true; // По умолчанию качаем аудио (вариант 2)
+        private bool _isAudioOnly;
         public bool IsAudioOnly
         {
             get => _isAudioOnly;
-            set => SetProperty(ref _isAudioOnly, value);
+            set
+            {
+                // Если значение не изменилось - ничего не делаем
+                if (_isAudioOnly == value) return;
+
+                SetProperty(ref _isAudioOnly, value);
+                _ = CheckAndAnalyzeVideoAsync();
+            }
         }
 
         public TimeInputViewModel StartTime { get; } = new TimeInputViewModel();
@@ -71,7 +96,7 @@ namespace KolesoYoutubeDownloader.ViewModels
         {
             _downloaderService = pDownloaderService;
             _dialogService = pDialogService;
-
+            _isAudioOnly = true;
             DownloadCommand = new RelayCommand(ExecuteDownload, CanExecuteDownload);
         }
 
@@ -160,6 +185,53 @@ namespace KolesoYoutubeDownloader.ViewModels
             }
 
             throw new FormatException($"Неверный формат времени: '{pInput}'. Используйте формат mm:ss.f или hh:mm:ss.fff");
+        }
+        private async Task CheckAndAnalyzeVideoAsync()
+        {
+            // Отменяем предыдущий анализ, если юзер продолжает печатать/удалять
+            _analysisCts?.Cancel();
+            _analysisCts = new CancellationTokenSource();
+            CancellationToken lToken = _analysisCts.Token;
+
+            if (IsAudioOnly || string.IsNullOrWhiteSpace(VideoUrl)) return;
+
+            string lLowerUrl = VideoUrl.ToLower();
+            if (!lLowerUrl.Contains("youtube.com") && !lLowerUrl.Contains("youtu.be")) return;
+
+            try
+            {
+                IsAnalyzing = true;
+
+                // Передаем токен в сервис
+                List<string> lQualities = await _downloaderService.GetAvailableVideoQualitiesAsync(VideoUrl, lToken);
+
+                // Если пока мы парсили, юзер изменил ссылку - игнорируем результат
+                if (lToken.IsCancellationRequested) return;
+
+                if (lQualities.Count > 0)
+                {
+                    string lMessage = "Доступные варианты качества для этого видео:\n\n" + string.Join("\n", lQualities);
+
+                    // Вызываем диалоговый сервис прямо из ViewModel (никакого Code-Behind!)
+                    _dialogService.ShowMessage("Анализ видео завершен", lMessage);
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                // Это нормально, мы сами прервали задачу при редактировании ссылки
+            }
+            catch (Exception lEx)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ошибка анализа видео: {lEx.Message}");
+            }
+            finally
+            {
+                // Выключаем индикатор, только если это актуальная задача (не отмененная)
+                if (!lToken.IsCancellationRequested)
+                {
+                    IsAnalyzing = false;
+                }
+            }
         }
     }
 }

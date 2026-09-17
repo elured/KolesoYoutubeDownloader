@@ -21,7 +21,12 @@ namespace KolesoYoutubeDownloader.Converters
 
         public object ConvertBack(object pValue, Type pTargetType, object pParameter, CultureInfo pCulture)
         {
-            throw new NotSupportedException();
+            if (pValue is bool lBoolValue)
+            {
+                return !lBoolValue;
+            }
+
+            return false;
         }
     }
 }
