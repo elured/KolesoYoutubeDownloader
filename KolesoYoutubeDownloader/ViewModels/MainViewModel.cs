@@ -2,9 +2,10 @@
 using KolesoYoutubeDownloader.Services;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
 
@@ -17,9 +18,6 @@ namespace KolesoYoutubeDownloader.ViewModels
         private CancellationTokenSource _analysisCts;
 
         #region Свойства для привязки к интерфейсу (Bindings)
-
-        // Событие для чистого взаимодействия с View
-        //public event Action<string> OnAnalysisCompleted;
 
         private bool _isAnalyzing;
         public bool IsAnalyzing
@@ -34,10 +32,23 @@ namespace KolesoYoutubeDownloader.ViewModels
             get => _videoUrl;
             set
             {
-                // Если значение не изменилось - ничего не делаем
                 if (_videoUrl == value) return;
 
                 SetProperty(ref _videoUrl, value);
+
+                // Очистка привязана строго к удалению ссылки
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    _analysisCts?.Cancel();
+                    AvailableQualities.Clear();
+                    SelectedQuality = string.Empty;
+                    HasQualities = false;
+
+                    StartTime.Clear();
+                    EndTime.Clear();
+                    return;
+                }
+
                 _ = CheckAndAnalyzeVideoAsync();
             }
         }
@@ -48,7 +59,6 @@ namespace KolesoYoutubeDownloader.ViewModels
             get => _isAudioOnly;
             set
             {
-                // Если значение не изменилось - ничего не делаем
                 if (_isAudioOnly == value) return;
 
                 SetProperty(ref _isAudioOnly, value);
@@ -57,7 +67,6 @@ namespace KolesoYoutubeDownloader.ViewModels
         }
 
         public TimeInputViewModel StartTime { get; } = new TimeInputViewModel();
-
         public TimeInputViewModel EndTime { get; } = new TimeInputViewModel();
 
         private double _progressPercent;
@@ -82,10 +91,25 @@ namespace KolesoYoutubeDownloader.ViewModels
             {
                 if (SetProperty(ref _isDownloading, value))
                 {
-                    // Когда статус скачивания меняется, просим WPF перепроверить, активна ли кнопка
                     CommandManager.InvalidateRequerySuggested();
                 }
             }
+        }
+
+        public ObservableCollection<string> AvailableQualities { get; } = new ObservableCollection<string>();
+
+        private string _selectedQuality;
+        public string SelectedQuality
+        {
+            get => _selectedQuality;
+            set => SetProperty(ref _selectedQuality, value);
+        }
+
+        private bool _hasQualities;
+        public bool HasQualities
+        {
+            get => _hasQualities;
+            set => SetProperty(ref _hasQualities, value);
         }
 
         #endregion
@@ -102,7 +126,6 @@ namespace KolesoYoutubeDownloader.ViewModels
 
         private bool CanExecuteDownload(object pParameter)
         {
-            // Кнопка активна только если мы не качаем прямо сейчас и URL не пустой
             return !IsDownloading && !string.IsNullOrWhiteSpace(VideoUrl);
         }
 
@@ -114,84 +137,56 @@ namespace KolesoYoutubeDownloader.ViewModels
                 ProgressPercent = 0;
                 StatusText = "Подготовка...";
 
-                // 1. Парсим время
                 TimeSpan? lStartTime = StartTime.GetTimeSpan();
                 TimeSpan? lEndTime = EndTime.GetTimeSpan();
 
-                // 2. Формируем настройки
-                var lOptions = new DownloadOptions
+                DownloadOptions lOptions = new DownloadOptions
                 {
                     VideoUrl = this.VideoUrl.Trim(),
                     IsAudioOnly = this.IsAudioOnly,
                     StartTime = lStartTime,
-                    EndTime = lEndTime
+                    EndTime = lEndTime,
+                    SelectedQuality = this.SelectedQuality
                 };
 
-                // 3. Создаем обработчик прогресса, который будет обновлять UI
-                var lProgressIndicator = new Progress<ProgressData>(pData =>
+                Progress<ProgressData> lProgressIndicator = new Progress<ProgressData>(pData =>
                 {
                     ProgressPercent = pData.Percent;
                     StatusText = pData.StatusText;
                 });
 
-                // 4. Запускаем скачивание
                 await _downloaderService.DownloadVideoAsync(lOptions, lProgressIndicator);
+
+                // Даем UI-потоку дорисовать полоску без зависаний перед вызовом диалога
+                await Task.Delay(800);
 
                 _dialogService.ShowMessage("Успех", "Скачивание и обработка успешно завершены!");
             }
-            catch (FormatException ex)
+            catch (FormatException lEx)
             {
-                _dialogService.ShowError("Ошибка ввода", ex.Message);
+                _dialogService.ShowError("Ошибка ввода", lEx.Message);
             }
-            catch (Exception ex)
+            catch (Exception lEx)
             {
-                _dialogService.ShowError("Ошибка", $"Произошла ошибка при скачивании:\n{ex.Message}");
+                _dialogService.ShowError("Ошибка", $"Произошла ошибка при скачивании:\n{lEx.Message}");
             }
             finally
             {
                 IsDownloading = false;
                 StatusText = "Готов к работе";
-                ProgressPercent = 0; 
-                StartTime.Clear();
-                EndTime.Clear();
+                ProgressPercent = 0;
             }
         }
 
-        // Перенесенный метод парсинга времени из консольного проекта
-        private TimeSpan? ParseTimeSpan(string pInput)
-        {
-            if (string.IsNullOrWhiteSpace(pInput)) return null;
-
-            string[] lFormats =
-            {
-                "m\\:ss\\.f", "mm\\:ss\\.f",
-                "m\\:ss\\.ff", "mm\\:ss\\.ff",
-                "m\\:ss\\.fff", "mm\\:ss\\.fff",
-                "h\\:mm\\:ss\\.f", "hh\\:mm\\:ss\\.f",
-                "h\\:mm\\:ss\\.ff", "hh\\:mm\\:ss\\.ff",
-                "h\\:mm\\:ss\\.fff", "hh\\:mm\\:ss\\.fff",
-                "m\\:ss", "mm\\:ss",
-                "h\\:mm\\:ss", "hh\\:mm\\:ss"
-            };
-
-            if (TimeSpan.TryParseExact(pInput.Trim(), lFormats, CultureInfo.InvariantCulture, TimeSpanStyles.None, out var lParsedTime))
-            {
-                return lParsedTime;
-            }
-
-            if (TimeSpan.TryParse(pInput.Trim(), out var lStandardParsedTime))
-            {
-                return lStandardParsedTime;
-            }
-
-            throw new FormatException($"Неверный формат времени: '{pInput}'. Используйте формат mm:ss.f или hh:mm:ss.fff");
-        }
         private async Task CheckAndAnalyzeVideoAsync()
         {
-            // Отменяем предыдущий анализ, если юзер продолжает печатать/удалять
             _analysisCts?.Cancel();
             _analysisCts = new CancellationTokenSource();
             CancellationToken lToken = _analysisCts.Token;
+
+            AvailableQualities.Clear();
+            SelectedQuality = string.Empty;
+            HasQualities = false;
 
             if (IsAudioOnly || string.IsNullOrWhiteSpace(VideoUrl)) return;
 
@@ -202,23 +197,36 @@ namespace KolesoYoutubeDownloader.ViewModels
             {
                 IsAnalyzing = true;
 
-                // Передаем токен в сервис
                 List<string> lQualities = await _downloaderService.GetAvailableVideoQualitiesAsync(VideoUrl, lToken);
 
-                // Если пока мы парсили, юзер изменил ссылку - игнорируем результат
                 if (lToken.IsCancellationRequested) return;
 
                 if (lQualities.Count > 0)
                 {
-                    string lMessage = "Доступные варианты качества для этого видео:\n\n" + string.Join("\n", lQualities);
+                    foreach (string lQuality in lQualities)
+                    {
+                        AvailableQualities.Add(lQuality);
+                    }
 
-                    // Вызываем диалоговый сервис прямо из ViewModel (никакого Code-Behind!)
-                    _dialogService.ShowMessage("Анализ видео завершен", lMessage);
+                    string lTargetQuality = null;
+
+                    for (int lIndex = lQualities.Count - 1; lIndex >= 0; lIndex--)
+                    {
+                        string lCleanString = lQualities[lIndex].Replace("p", "");
+                        if (int.TryParse(lCleanString, out int lHeight) && lHeight <= 720)
+                        {
+                            lTargetQuality = lQualities[lIndex];
+                            break;
+                        }
+                    }
+
+                    SelectedQuality = lTargetQuality != null ? lTargetQuality : AvailableQualities[0];
+                    HasQualities = true;
                 }
             }
             catch (TaskCanceledException)
             {
-                // Это нормально, мы сами прервали задачу при редактировании ссылки
+                // Отменено пользователем
             }
             catch (Exception lEx)
             {
@@ -226,7 +234,6 @@ namespace KolesoYoutubeDownloader.ViewModels
             }
             finally
             {
-                // Выключаем индикатор, только если это актуальная задача (не отмененная)
                 if (!lToken.IsCancellationRequested)
                 {
                     IsAnalyzing = false;

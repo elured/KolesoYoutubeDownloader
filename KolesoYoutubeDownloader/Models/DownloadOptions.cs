@@ -15,8 +15,7 @@ namespace KolesoYoutubeDownloader.Models
         public TimeSpan? StartTime { get; set; }
 
         public TimeSpan? EndTime { get; set; }
+        public string SelectedQuality { get; set; }
 
-        // Позже можно будет добавить сюда:
-        // public string TargetDirectory { get; set; } 
     }
 }

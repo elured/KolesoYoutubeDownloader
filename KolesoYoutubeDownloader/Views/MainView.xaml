@@ -7,10 +7,11 @@
              xmlns:vm="clr-namespace:KolesoYoutubeDownloader.ViewModels"
              xmlns:conv="clr-namespace:KolesoYoutubeDownloader.Converters"
              mc:Ignorable="d" 
-             d:DesignHeight="450" d:DesignWidth="800">
+             d:DesignHeight="650" d:DesignWidth="800">
     <UserControl.Resources>
         <conv:InverseBooleanConverter x:Key="InverseBooleanConverter"/>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <conv:PercentToGridLengthConverter x:Key="PercentToGridLengthConverter"/>
     </UserControl.Resources>
 
     <Grid Margin="20">
@@ -45,7 +46,7 @@
                      FontSize="14"/>
         </StackPanel>
 
-        <StackPanel Orientation="Horizontal" 
+        <!--<StackPanel Orientation="Horizontal" 
                     Margin="0,45,0,10"
                     Visibility="{Binding IsAnalyzing, Converter={StaticResource BooleanToVisibilityConverter}}">
 
@@ -58,7 +59,7 @@
                        Foreground="#007ACC" 
                        FontStyle="Italic" 
                        VerticalAlignment="Center"/>
-        </StackPanel>
+        </StackPanel>-->
         <!-- Формат и Обрезка -->
         <Grid Grid.Row="2" Margin="0,0,0,20">
             <Grid.ColumnDefinitions>
@@ -72,6 +73,7 @@
                            FontWeight="SemiBold" 
                            Margin="0,0,0,5" 
                            Foreground="#555555"/>
+
                 <RadioButton Content="Только аудио (FLAC/MP3)" 
                              IsChecked="{Binding IsAudioOnly, UpdateSourceTrigger=PropertyChanged}" 
                              GroupName="FormatGroup" 
@@ -83,6 +85,94 @@
                              GroupName="FormatGroup" 
                              Margin="0,2,0,2" 
                              IsEnabled="{Binding IsDownloading, Converter={StaticResource InverseBooleanConverter}}"/>
+
+                <!-- Индикатор анализа -->
+                <StackPanel Orientation="Horizontal" 
+                            Margin="0,10,0,10"
+                            Visibility="{Binding IsAnalyzing, Converter={StaticResource BooleanToVisibilityConverter}}">
+
+                    <ProgressBar IsIndeterminate="True" 
+                                 Width="250" 
+                                 Height="12" 
+                                 Margin="0,0,10,0"/>
+
+                    <TextBlock Text="Анализируем..." 
+                               Foreground="#007ACC" 
+                               FontStyle="Italic" 
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <ContentControl x:Name="QualitiesListView"
+                                HorizontalAlignment="Left"
+                                 Width="150" 
+                                Content="{Binding}" 
+                                Visibility="{Binding HasQualities, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <ContentControl.ContentTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Text="Выберите качество видео:" 
+                                           FontWeight="SemiBold" 
+                                           Margin="0,0,0,5" 
+                                           Foreground="#555555"/>
+
+                                <ListView ItemsSource="{Binding AvailableQualities}" 
+                                          SelectedItem="{Binding SelectedQuality, UpdateSourceTrigger=PropertyChanged}"
+                                          ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                          BorderThickness="0" 
+                                          Background="Transparent"
+                                          HorizontalContentAlignment="Stretch"
+                                          Margin="0,5,0,0">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" 
+                                                       FontSize="14" 
+                                                       HorizontalAlignment="Center"/>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                    <!-- ItemContainerStyle с 2D градиентом остается без изменений -->
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="Padding" Value="0,4"/>
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="ListViewItem">
+                                                        <Border x:Name="ItemBorder" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsSelected" Value="True">
+                                                                <Setter TargetName="ItemBorder" Property="Background">
+                                                                    <Setter.Value>
+                                                                        <RadialGradientBrush Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.8" RadiusY="0.9">
+                                                                            <GradientStop Color="#B0E2FF" Offset="0.0" />
+                                                                            <GradientStop Color="#B0E2FF" Offset="0.4" />
+                                                                            <GradientStop Color="Transparent" Offset="1.0" />
+                                                                        </RadialGradientBrush>
+                                                                    </Setter.Value>
+                                                                </Setter>
+                                                            </Trigger>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="ItemBorder" Property="Background">
+                                                                    <Setter.Value>
+                                                                        <RadialGradientBrush Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.8" RadiusY="0.9">
+                                                                            <GradientStop Color="#E6F2FF" Offset="0.0" />
+                                                                            <GradientStop Color="#E6F2FF" Offset="0.4" />
+                                                                            <GradientStop Color="Transparent" Offset="1.0" />
+                                                                        </RadialGradientBrush>
+                                                                    </Setter.Value>
+                                                                </Setter>
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                </ListView>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ContentControl.ContentTemplate>
+                </ContentControl>
             </StackPanel>
             <!-- Обрезка -->
             <StackPanel Grid.Column="1" 
@@ -243,10 +333,24 @@
                            HorizontalAlignment="Right" 
                            Foreground="#666666"/>
             </Grid>
-            <ProgressBar Value="{Binding ProgressPercent}" 
+            <!--<ProgressBar Value="{Binding ProgressPercent}" 
                          Height="15" 
                          Minimum="0" 
-                         Maximum="100"/>
+                         Maximum="200"/>-->
+            <!-- Мгновенный кастомный прогресс-бар без лагов анимации -->
+            <Border Height="15" CornerRadius="3" ClipToBounds="True">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <!-- Заполненная часть -->
+                        <ColumnDefinition Width="{Binding ProgressPercent, Converter={StaticResource PercentToGridLengthConverter}}" />
+                        <!-- Пустая часть -->
+                        <ColumnDefinition Width="{Binding ProgressPercent, Converter={StaticResource PercentToGridLengthConverter}, ConverterParameter=Remainder}" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Background="#06B025" />
+                    <Border Grid.Column="1" Background="#E6E6E6" />
+                </Grid>
+            </Border>
         </StackPanel>
 
         <!-- Кнопка Скачать -->
